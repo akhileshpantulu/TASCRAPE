@@ -1,0 +1,8 @@
+{
+  "name": "ta-reviews-bookmarklet",
+  "private": true,
+  "description": "Build tooling for the TA Reviews bookmark. Run: npm install && node build.js",
+  "devDependencies": {
+    "terser": "5.31.0"
+  }
+}

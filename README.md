@@ -50,16 +50,24 @@ If TripAdvisor changes its internal query ID (error `PersistedQueryNotFound`), t
 
 ## Claude Cowork workflow
 
-`cowork/` packages the same scraper as a Cowork skill driven through Claude in Chrome, with a tracker panel in the page that shows a progress bar for each asset.
+The Cowork workflow is built on the bookmark. Claude prepares the asset list, opens the first hotel page with the list attached to the link (`#ta-config=...`), asks you to click **TA Reviews** once, then follows the tracker, handles the one-time setup click, saves the CSV and summarizes.
 
 - `cowork/TripAdvisor-Reviews-Cowork.zip`: unzip, choose the folder as the Cowork working folder, fill in `assets.txt`, then paste `COWORK_SETUP_PROMPT.md` into Cowork.
 - `cowork/tripadvisor-reviews-skill.zip`: the skill on its own, for uploading as a custom skill.
-- `cowork/tripadvisor-reviews/SKILL.md`: the workflow instructions Claude follows.
+- `cowork/tripadvisor-reviews/SKILL.md`: the workflow Claude follows.
+- `cowork/tripadvisor-reviews/scripts/make_link.py`: builds the link from `assets.txt`.
 
-The script reads `window.__taConfig` (asset list and limits) when Claude injects it, and exposes `window.__taSummary()`, `window.__taStop()` and `window.__taDownload()`. Without a config it behaves as the bookmark and asks for URLs.
+The bookmark takes its asset list from `window.__taConfig`, a `#ta-config=` link, or its pop-up (URLs or pasted JSON), and exposes `window.__taSummary()`, `window.__taSample()`, `window.__taStop()` and `window.__taDownload()`.
 
-After editing `bookmarklet/tripadvisor_bookmarklet.js`, rebuild everything:
+## Rebuilding the bookmark
 
+After editing `bookmarklet/tripadvisor_bookmarklet.js`:
+
+```bash
+cd bookmarklet && npm install && cd ..
+```
 ```bash
 node bookmarklet/build.js && python cowork/package.py
 ```
+
+This writes `bookmarklet/bookmark.txt` (the bookmark URL), `bookmarklet/install.html` and the Cowork zips.

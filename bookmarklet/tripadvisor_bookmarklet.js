@@ -1,21 +1,21 @@
 /*
  * TripAdvisor review scraper with a per-asset progress tracker.
  *
- * One script, two ways to run it:
+ * Runs as a browser bookmark ("TA Reviews") on a tripadvisor.com page.
+ * The asset list comes from, in order:
+ *   1. window.__taConfig, if set by Claude in Chrome before the bookmark runs.
+ *   2. A "#ta-config=<url-encoded JSON>" suffix on the page URL. The Cowork
+ *      workflow opens such a link, then the user clicks the bookmark.
+ *   3. Pop-up questions (URLs separated by spaces, or the same JSON pasted in).
+ * Config JSON: {"assets":[{"name":"Hotel A","url":"https://www.tripadvisor.com/Hotel_Review-g1-d123-Reviews-A.html"}],
+ *               "maxReviews":500, "autoDownload":true}   (maxReviews optional)
  *
- *   1. Bookmark: click the "TA Reviews" bookmark on a tripadvisor.com page.
- *      It asks for hotel URLs and a review limit.
- *
- *   2. Cowork / Claude in Chrome: set window.__taConfig first, then run this
- *      script in the page. No dialogs are shown. Example:
- *        window.__taConfig = {
- *          assets: [{ name: "Hotel A", url: "https://www.tripadvisor.com/Hotel_Review-g1-d123-Reviews-A.html" }],
- *          maxReviews: 500,          (optional, default: all)
- *          autoDownload: true        (optional, default: true)
- *        };
- *      Read progress with:  window.__taSummary()   (returns a JSON string)
- *      Stop early with:     window.__taStop()
- *      Re-download CSV:     window.__taDownload()
+ * While running, the page exposes:
+ *   window.__taSummary()   progress as a JSON string
+ *   window.__taSample()    trimmed raw review, for fixing field names
+ *   window.__taStop()      stop early (keeps collected reviews)
+ *   window.__taDownload()  download the CSV again
+ * and the tracker panel carries data-ta-status="running|needs_setup|done|...".
  *
  * Requests run inside your own browser tab, from your own IP address and with
  * your real cookies, which avoids the 403 blocks that hit cloud servers.
@@ -27,14 +27,14 @@
  * hotel page once lets the script copy the page's own request as a template.
  * The template is saved in localStorage on tripadvisor.com for later runs.
  *
- * Rebuild install.html and the Cowork skill copy after editing:
+ * Rebuild install.html and bookmark.txt after editing:
  *     node bookmarklet/build.js
  *
  * Do not put "//" line comments or multi-line template strings inside the
  * function body: the build step trims and joins lines.
  */
 (async () => {
-  const VERSION = "2.0";
+  const VERSION = "2.1";
   /* UPDATE HERE: fallback values, used only until a template is learned */
   const GRAPHQL_PATH = "/data/graphql/ids";
   const FALLBACK_QUERY_ID = "ef1a9f94012220d3";
@@ -73,21 +73,49 @@
     return { name: given || nameFromUrl(url) || "location " + m[1], url, id: Number(m[1]) };
   };
 
-  const cfg = window.__taConfig && typeof window.__taConfig === "object" ? window.__taConfig : null;
+  /* Config sources, in order:
+     1. window.__taConfig set by Claude in Chrome before running.
+     2. "#ta-config=<url-encoded JSON>" on the page URL (Cowork opens this link,
+        then the user clicks the bookmark).
+     3. Pop-up questions. The first one also accepts the same JSON. */
+  const parseCfg = (text) => {
+    try {
+      const v = JSON.parse(text);
+      if (Array.isArray(v)) return { assets: v };
+      return v && typeof v === "object" ? v : null;
+    } catch (e) { return null; }
+  };
+  let cfg = window.__taConfig && typeof window.__taConfig === "object" ? window.__taConfig : null;
   window.__taConfig = undefined;
+  if (!cfg) {
+    const h = location.hash.match(/[#&]ta-config=([^&]+)/);
+    if (h) {
+      try { cfg = parseCfg(decodeURIComponent(h[1])); } catch (e) { cfg = null; }
+      if (!cfg) { alert("The #ta-config part of this link is not valid. Ask Claude to generate the link again."); return; }
+      try { history.replaceState(history.state, "", location.pathname + location.search); } catch (e) {}
+    }
+  }
   let entries;
   let maxReviews = Infinity;
   let autoDownload = true;
+  const applyCfg = (c) => {
+    entries = Array.isArray(c.assets) ? c.assets : (Array.isArray(c.urls) ? c.urls : []);
+    if (Number(c.maxReviews) > 0) maxReviews = Number(c.maxReviews);
+    if (c.autoDownload === false) autoDownload = false;
+  };
   if (cfg) {
-    entries = Array.isArray(cfg.assets) ? cfg.assets : (Array.isArray(cfg.urls) ? cfg.urls : []);
-    if (Number(cfg.maxReviews) > 0) maxReviews = Number(cfg.maxReviews);
-    if (cfg.autoDownload === false) autoDownload = false;
+    applyCfg(cfg);
   } else {
     const input = prompt(
-      "Paste one or more TripAdvisor hotel URLs (separate them with spaces).\n" +
+      "Paste one or more TripAdvisor hotel URLs (separate them with spaces),\n" +
+      "or the asset list Claude gave you.\n" +
       "Leave empty to scrape the hotel on this page.", "");
     if (input === null) return;
-    entries = (input.trim() || location.href).split(/\s+/).filter(Boolean);
+    const pasted = /^\s*[[{]/.test(input) ? parseCfg(input.trim()) : null;
+    if (pasted) { cfg = pasted; applyCfg(pasted); }
+    else entries = (input.trim() || location.href).split(/\s+/).filter(Boolean);
+  }
+  if (!cfg) {
     const maxText = prompt("Max reviews per hotel? Leave empty for all.", "");
     if (maxText === null) return;
     if (parseInt(maxText, 10) > 0) maxReviews = parseInt(maxText, 10);
@@ -243,6 +271,7 @@
     if (state.status === "running" && frac > 0.02 && frac < 1) line += " · ~" + Math.max(1, Math.round(mins / frac - mins)) + " min left";
     if (state.pageSize) line += " · " + state.pageSize + " per request";
     stats.textContent = line;
+    panel.setAttribute("data-ta-status", state.status);
     const bannerText = state.status === "needs_setup" || state.status === "aborted" ? state.message :
       state.warnings.join("\n");
     banner.style.display = bannerText ? "block" : "none";
@@ -352,12 +381,16 @@
   let template = loadTemplate() || fallbackTemplate;
   let verified = false;
   state.queryId = queryIdOf(template);
-  const pageSizeOf = (t) => findNumberKey(t.item.variables, "limit") || 10;
+  const SIZE_KEYS = ["limit", "pageSize", "perPage"];
+  const pageSizeOf = (t) => {
+    for (const k of SIZE_KEYS) { const n = findNumberKey(t.item.variables, k); if (n) return n; }
+    return 10;
+  };
   const buildBody = (t, hotelId, offset, limit) => {
     const item = clone(t.item);
     item.variables = replaceValue(item.variables, t.locId, hotelId);
     setKey(item.variables, "offset", offset);
-    if (limit) setKey(item.variables, "limit", limit);
+    if (limit) for (const k of SIZE_KEYS) setKey(item.variables, k, limit);
     return [item];
   };
 
@@ -454,7 +487,14 @@
     }
     for (const r of results) {
       const l = findReviews(r);
-      if (l) return { reviews: l, total: findNumberKey(r, "totalCount"), notFound };
+      if (l) {
+        let total = null;
+        for (const k of ["totalCount", "totalResults", "totalReviews"]) {
+          total = findNumberKey(r, k);
+          if (total != null) break;
+        }
+        return { reviews: l, total, notFound };
+      }
     }
     return { reviews: [], total: null, notFound };
   };
@@ -573,7 +613,7 @@
           goodLimit = limit;
           if (template !== fallbackTemplate) { template.pageSize = limit; saveTemplate(template); }
         }
-        state.pageSize = limit;
+        state.pageSize = Math.max(state.pageSize || 0, page.reviews.length);
         return { page, limit };
       }
       if (limit !== base) await sleep(rand(PAGE_DELAY));

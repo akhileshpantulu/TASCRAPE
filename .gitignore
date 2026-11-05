@@ -5,3 +5,4 @@ venv/
 tripadvisor_reviews.csv
 scraper.log
 debug/
+node_modules/

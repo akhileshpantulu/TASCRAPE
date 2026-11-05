@@ -1,16 +1,18 @@
 // Builds, from bookmarklet/tripadvisor_bookmarklet.js:
-//   bookmarklet/install.html                         (drag-to-bookmarks page)
-//   cowork/tripadvisor-reviews/scripts/ta_scraper.js (script Claude in Chrome injects)
+//   bookmarklet/bookmark.txt   the javascript: URL to paste into a bookmark
+//   bookmarklet/install.html   drag-to-bookmarks install page
+//
 // Usage: node bookmarklet/build.js
+// Minifies with terser when it is installed (npm install terser), which makes
+// the bookmark about half the size. Without terser it falls back to stripping
+// comments and whitespace.
 const fs = require("fs");
 const path = require("path");
 
 const dir = __dirname;
-const root = path.join(dir, "..");
 const src = fs.readFileSync(path.join(dir, "tripadvisor_bookmarklet.js"), "utf8");
 
-// Drop the leading header comment and whole-line /* ... */ comments, trim lines.
-const body = src
+const basicStrip = (code) => code
   .replace(/^\/\*[\s\S]*?\*\/\s*/, "")
   .split("\n")
   .filter((l) => !/^\s*\/\*.*\*\/\s*$/.test(l))
@@ -18,20 +20,35 @@ const body = src
   .filter(Boolean)
   .join("\n");
 
-// Sanity check: the stripped code must still parse.
-new Function(body);
+// Percent-encode only what a javascript: URL needs: "%" (would be decoded),
+// "#" (fragment), whitespace other than plain spaces, backslash and
+// non-ASCII characters. Everything else stays readable.
+const encodeBookmarklet = (code) => "javascript:" + code.replace(/[%#\\\r\n\t\u0080-￿]/g,
+  (c) => encodeURIComponent(c));
 
-const skillScript = path.join(root, "cowork", "tripadvisor-reviews", "scripts", "ta_scraper.js");
-fs.mkdirSync(path.dirname(skillScript), { recursive: true });
-fs.writeFileSync(skillScript,
-  "/* TripAdvisor review scraper v2 (generated from bookmarklet/tripadvisor_bookmarklet.js; edit that file, not this one). " +
-  "Set window.__taConfig before running. Progress: window.__taSummary(). */\n" + body +
-  "\n\"TA scraper started\";\n");
+(async () => {
+  let code;
+  let how;
+  try {
+    const { minify } = require("terser");
+    const out = await minify(src, { compress: { passes: 2 }, mangle: true, format: { comments: false, ascii_only: true } });
+    code = out.code;
+    how = "terser";
+  } catch (e) {
+    if (e.code !== "MODULE_NOT_FOUND") throw e;
+    code = basicStrip(src);
+    how = "basic strip (install terser for a smaller bookmark)";
+  }
+  code = code.replace(/;?\s*$/, "") + ";void 0";
+  new Function(code); // must still parse
 
-const href = "javascript:" + encodeURIComponent(body);
-const escHtml = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const href = encodeBookmarklet(code);
+  // Round-trip check: what the browser decodes must equal the code.
+  if (decodeURIComponent(href.slice("javascript:".length)) !== code) throw new Error("encoding round-trip failed");
+  fs.writeFileSync(path.join(dir, "bookmark.txt"), href + "\n");
 
-const html = `<!doctype html>
+  const escHtml = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const html = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -48,10 +65,10 @@ const html = `<!doctype html>
 </head>
 <body>
 <h1>TripAdvisor Review Scraper</h1>
-<p>Version 2, with a progress tracker for each hotel. Runs in your own browser, so no terminal, install or Python is needed. Works in Chrome and Edge. Claude in Chrome (Cowork) can use this same bookmark.</p>
+<p>Runs in your own browser, with a progress tracker for each hotel. No terminal, install or Python needed. Works in Chrome and Edge, and with the Claude Cowork workflow.</p>
 
 <h2>1. Add the bookmark</h2>
-<p>Show your bookmarks bar (<code>Ctrl+Shift+B</code>, or <code>Cmd+Shift+B</code> on Mac). If you have an older <b>TA Reviews</b> bookmark, delete it. Then <b>drag this green button onto the bar</b>:</p>
+<p>Show your bookmarks bar (<code>Ctrl+Shift+B</code>, or <code>Cmd+Shift+B</code> on Mac). Delete any older <b>TA Reviews</b> bookmark, then <b>drag this green button onto the bar</b>:</p>
 <p><a class="bm" href="${escHtml(href)}">TA Reviews</a></p>
 <p>If dragging does not work: right-click the bookmarks bar, choose <b>Add page</b>, name it <code>TA Reviews</code>, and paste the text below into the URL field.</p>
 <textarea id="code" readonly>${escHtml(href)}</textarea>
@@ -61,15 +78,18 @@ const html = `<!doctype html>
 <ol>
   <li>Open one of your hotel pages on <a href="https://www.tripadvisor.com" target="_blank" rel="noopener">tripadvisor.com</a>.</li>
   <li>Click the <b>TA Reviews</b> bookmark.</li>
-  <li>Paste your hotel URLs separated by spaces, or leave the box empty to scrape the hotel you are viewing.</li>
+  <li>Paste your hotel URLs separated by spaces (or the asset list Claude gave you), or leave the box empty to scrape the hotel you are viewing.</li>
   <li>Enter a max number of reviews per hotel, or leave it empty for all.</li>
-  <li>A tracker panel shows a progress bar for each hotel. Keep the tab open; do not reload it or navigate away. When it finishes, the CSV downloads automatically.</li>
+  <li>A tracker panel shows a progress bar for each hotel. Keep the tab open and visible; do not reload it or navigate away. When it finishes, the CSV downloads automatically.</li>
 </ol>
 <p>If an orange setup message appears, scroll to the hotel's reviews and click the next-page arrow once.</p>
+
+<h2>3. Use it with Claude Cowork</h2>
+<p>Claude opens your first hotel page with your asset list attached to the link. When it asks, click <b>TA Reviews</b> once. No questions pop up; Claude follows the tracker from there.</p>
 </body>
 </html>
 `;
-
-fs.writeFileSync(path.join(dir, "install.html"), html);
-console.log(`Wrote install.html (bookmarklet ${href.length} chars)`);
-console.log(`Wrote ${path.relative(root, skillScript)} (${body.length} chars)`);
+  fs.writeFileSync(path.join(dir, "install.html"), html);
+  console.log(`Minified with ${how}`);
+  console.log(`Wrote bookmark.txt and install.html (bookmark ${href.length} chars)`);
+})().catch((e) => { console.error(e); process.exit(1); });

@@ -1,102 +1,88 @@
 ---
 name: tripadvisor-reviews
-description: Scrape TripAdvisor hotel reviews for a list of assets (hotels) through Claude in Chrome, show a live per-asset progress tracker in the browser, report progress in chat, and save the reviews as a CSV. Use when the user asks to scrape, pull, refresh, download or collect TripAdvisor reviews for one or more hotels or assets.
+description: Pull TripAdvisor hotel reviews for a list of assets (hotels) using the user's "TA Reviews" browser bookmark and Claude in Chrome, follow the bookmark's live per-asset progress tracker, and save the reviews as a CSV. Use when the user asks to scrape, pull, refresh, download or collect TripAdvisor reviews for one or more hotels or assets.
 ---
 
-# TripAdvisor Reviews
+# TripAdvisor Reviews (bookmark-driven)
 
-Collects TripAdvisor reviews for the user's assets by running `scripts/ta_scraper.js` inside the user's own Chrome tab on tripadvisor.com. Running in the user's browser matters: TripAdvisor blocks cloud servers with HTTP 403, but accepts requests from the user's normal browser session. Never try to scrape TripAdvisor from the sandbox with Python, curl or web fetch; it will be blocked.
+The scraping is done by the user's **TA Reviews** bookmark, running inside their own Chrome tab on tripadvisor.com. That matters: TripAdvisor blocks cloud servers with HTTP 403, but accepts requests from the user's normal browser. Never try to fetch TripAdvisor from the sandbox with Python, curl or web fetch; it will be blocked.
 
-The script is free and uses no paid APIs or proxies. It draws a tracker panel on the page with a progress bar per asset, and exposes its state to you through `window.__taSummary()`.
+Your job is to drive the bookmark: prepare the asset list, open the right page, have the user click the bookmark once, follow the tracker, handle the one-time setup step, and save and summarize the results.
 
-## 1. Get the asset list
+The bookmark is free and uses no paid APIs or proxies. If the user does not have it yet, they install it once by opening `install_bookmark.html` (in the working folder) in Chrome and dragging the green **TA Reviews** button onto the bookmarks bar.
 
-Use, in order of preference:
+## 1. Build the asset list
+
+Sources, in order of preference:
 1. Assets the user names in the request (names and/or TripAdvisor URLs).
-2. `assets.txt` in the working folder. One asset per line, `Asset Name | URL`. Lines starting with `#` are comments. A line with only a URL is fine; the name is then taken from the URL.
+2. `assets.txt` in the working folder: one asset per line, `Asset Name | URL`. Lines starting with `#` are comments.
 
-Each URL must be a TripAdvisor hotel page containing `-d<digits>-` (for example `...Hotel_Review-g60763-d93437-Reviews-...`). If an asset has a name but no URL, find its TripAdvisor hotel page URL by searching in Chrome, and show the user the URLs you found before scraping.
+Each URL must be a TripAdvisor hotel page containing `-d<digits>-` (for example `...Hotel_Review-g60763-d93437-Reviews-...`). If the user gives a name without a URL, find the hotel's TripAdvisor page in Chrome and show the user the URL you found before continuing.
 
-Also settle the review limit per asset: use the user's number if given, otherwise all reviews. For a first run on a new setup, suggest a limit of 20 as a test.
+Settle the review limit per asset: the user's number if given, otherwise all reviews. For a first run on a new setup, suggest 20 as a test.
 
-Briefly confirm the list (asset names and count) and the limit, then proceed without further questions.
+Generate the link with the helper script in this skill's folder:
 
-## 2. Open the first hotel page
-
-Using Claude in Chrome, open a tab on the FIRST asset's URL and wait for it to load. If TripAdvisor shows a captcha or "are you human" check, ask the user to complete it, then continue.
-
-Use this tab only for the run. Do not navigate, reload or close it until the run is finished: that kills the scraper and loses unsaved results. If you need to browse, use a different tab.
-
-Ask the user to keep this tab visible (for example in its own Chrome window) during long runs. Chrome slows down timers in hidden tabs, which makes the run much slower.
-
-## 3. Start the scraper
-
-Read `scripts/ta_scraper.js` from this skill's folder. Run JavaScript in the TripAdvisor tab, in a single call, consisting of a config line followed by the full, unmodified file contents:
-
-```js
-window.__taConfig = {
-  assets: [
-    { name: "Asset Name 1", url: "https://www.tripadvisor.com/Hotel_Review-...-d123-Reviews-..." },
-    { name: "Asset Name 2", url: "https://www.tripadvisor.com/Hotel_Review-...-d456-Reviews-..." }
-  ],
-  maxReviews: 500,      // omit or null for all reviews
-  autoDownload: true
-};
-/* ...entire contents of scripts/ta_scraper.js... */
+```bash
+python scripts/make_link.py assets.txt                    # all assets
+python scripts/make_link.py assets.txt --max 200          # with a limit
+python scripts/make_link.py assets.txt --only "Hotel A, Hotel B"
+python scripts/make_link.py --url "Hotel A | https://www.tripadvisor.com/Hotel_Review-..."   # ad hoc
 ```
 
-The call should return `"TA scraper started"` right away; the scraping continues in the page. A "TA Review Tracker" panel appears in the top-right corner of the page.
+It prints JSON with `link` (the first asset's page with the asset list attached after `#ta-config=`), `paste` (a fallback), `assets`, and `skipped` (invalid lines; tell the user about these). Confirm the asset names and limit with the user in one line, then continue.
 
-If running JavaScript in the page is unavailable or refused (for example the code is too long), fall back to the bookmark:
-1. Run only the `window.__taConfig = {...};` part.
-2. Ask the user to click their **TA Reviews** bookmark on that tab. The bookmark contains the same script and will use the config you set, with no pop-up questions.
-3. If they do not have the bookmark, they can install it by opening `install_bookmark.html` from the working folder in Chrome and dragging the green button to the bookmarks bar.
+## 2. Open the page and have the user click the bookmark
 
-## 4. Monitor and report progress
+1. With Claude in Chrome, open the `link` from step 1 in a tab and let it load. If TripAdvisor shows a captcha or "are you human" check, ask the user to complete it.
+2. Ask the user: **"Click the TA Reviews bookmark now."** The bookmark reads the asset list from the link, so no questions pop up. A "TA Review Tracker" panel appears in the top-right of the page.
+3. If the user clicks and gets a pop-up asking for URLs instead (TripAdvisor dropped the `#ta-config` part of the link), tell them to paste the `paste` text from step 1 into that pop-up. Give it to them in a code block so it is easy to copy.
 
-Every 20 to 30 seconds, run `window.__taSummary()` in the tab. It returns JSON:
+If you can run JavaScript in the page, you may instead run `window.__taConfig = <the paste JSON>;` in the tab before asking the user to click. The bookmark uses that too. You cannot click the bookmark for the user.
 
-```json
-{"status": "running", "message": "", "totalScraped": 230, "pageSize": 50, "csvFile": null,
- "assets": [{"name": "Asset 1", "status": "done", "scraped": 230, "target": 230, "error": null},
-            {"name": "Asset 2", "status": "running", "scraped": 50, "target": 120, "error": null}],
- "recentLog": ["..."]}
-```
+From now on, use this tab only for the run. Do not navigate, reload or close it until the run is finished: that stops the scraper. Ask the user to keep the tab visible, ideally in its own Chrome window; Chrome slows hidden tabs down.
 
-Post a short progress update in chat when something changes, and at least every 2 minutes on long runs, as a compact table: asset, status, scraped / target. Do not post one per poll if nothing changed.
+## 3. Follow progress
 
-Act on `status`:
-- `running`: keep polling.
-- `needs_setup`: TripAdvisor changed its internal query ID and the script needs to see one real reviews request. On the hotel page, scroll down to the reviews section and click the next-page arrow or the "2" page link of the reviews pager. Take a screenshot first if you need to find it. Then keep polling; status returns to `running` once it has learned the request. If it is still `needs_setup` after two attempts, try changing the review sort order or language filter. If that fails too, ask the user to click the next-page arrow themselves.
-- `aborted`: read `message`, tell the user, and offer to retry. Usually it means setup timed out; reload the first hotel page and start again from step 3.
-- `done` or `stopped`: go to step 5.
+Check every 20 to 30 seconds.
 
-If `warnings` in the summary is not empty (for example an asset with no review dates found), tell the user. Run `window.__taSample()` and include its output in your message: it is a trimmed copy of a raw review, showing the field names TripAdvisor used, which the script maintainer needs to fix the field mapping.
+- If you can run JavaScript in the page, call `window.__taSummary()`. It returns JSON: `status`, `message`, `totalScraped`, `pageSize`, `csvFile`, `warnings`, and `assets` (each with `name`, `status`, `scraped`, `target`, `error`).
+- Otherwise read the tracker panel (element `#ta-tracker`, whose `data-ta-status` attribute holds the overall status) from the page text or a screenshot. Each asset row shows its name, a status label and `scraped / target`.
 
-Per-asset statuses: `queued`, `running`, `done` (`scraped` 0 means the hotel has no reviews in the selected language), `blocked` (TripAdvisor returned 403/429 for that asset), `failed` (see `error`), `skipped` (run was stopped first).
+Post a short progress update in chat when something changes, and at least every 2 minutes on long runs, as a compact table: asset, status, scraped / target. Do not post one per check if nothing changed.
 
-To stop early, run `window.__taStop()`; the reviews collected so far are kept and downloaded.
+Overall status:
+- `running`: keep checking.
+- `needs_setup` (orange banner "One-time setup..."): TripAdvisor changed its internal query and the bookmark needs to see one real reviews request. On the hotel page, scroll to the reviews section and click the next-page arrow or the "2" link of the reviews pager; take a screenshot first if you need to find it. Status returns to `running` once it has learned. If it is still `needs_setup` after two tries, change the review sort order or language filter instead. If that also fails, ask the user to click the next-page arrow.
+- `aborted` (banner "Needs attention"): read the message, tell the user, offer to retry from step 2.
+- `done` or `stopped`: go to step 4.
 
-## 5. Save the results
+Asset statuses: `queued`, `running`, `done` ("No reviews" when it has none in the selected language), `blocked` (TripAdvisor returned 403/429 for that asset), `failed` (see the error), `skipped` (run stopped first).
 
-The CSV is downloaded by Chrome to the user's Downloads folder, with the name in `csvFile` (for example `tripadvisor_reviews_20261105_1430.csv`). Columns: `asset_name, hotel_url, location_id, id, title, text, rating, publishedDate, stayDate, username, tripType`. Dates are `YYYY-MM-DD`; `stayDate` is often only `YYYY-MM` because TripAdvisor shows the month of stay.
+To stop early: ask the user to click **Stop** on the tracker, or run `window.__taStop()`. Collected reviews are kept and downloaded.
 
-- If you have access to the Downloads folder, copy that file into `outputs/` in the working folder.
-- Otherwise tell the user the file name and ask them to move it into the working folder's `outputs/` folder, or to give you access to Downloads.
-- If the download did not happen, run `window.__taDownload()` to trigger it again.
+## 4. Save the results
 
-If `outputs/master_reviews.csv` exists, append the new rows to it and drop duplicates on `location_id` + `id`, keeping the newest. Report how many new reviews were added per asset.
+Chrome downloads the CSV to the user's Downloads folder as `tripadvisor_reviews_YYYYMMDD_HHMM.csv` (the exact name is `csvFile` in the summary, or the newest matching file). Columns: `asset_name, hotel_url, location_id, id, title, text, rating, publishedDate, stayDate, username, tripType`. Dates are `YYYY-MM-DD`; `stayDate` is often `YYYY-MM`.
 
-## 6. Summarize
+- If you can access the Downloads folder, copy the file into `outputs/` in the working folder.
+- Otherwise tell the user the file name and ask them to move it into `outputs/`, or to give you access to Downloads.
+- If no download happened, ask the user to click **Download CSV** on the tracker.
+
+If `outputs/master_reviews.csv` exists, append the new rows and drop duplicates on `location_id` + `id`, keeping the newest. Report how many new reviews were added per asset.
+
+Check the CSV: if `publishedDate` is empty for an asset, or `warnings` mentions missing dates, tell the user. Ask them to open **Log** on the tracker, click **Copy sample review** and send it to whoever maintains the bookmark (or run `window.__taSample()` yourself and include its output). It shows the field names TripAdvisor used.
+
+## 5. Summarize
 
 Finish with:
-- A table per asset: status and number of reviews collected.
-- Any blocked or failed assets, with the suggestion to re-run just those later.
+- A table per asset: status and reviews collected.
+- Blocked or failed assets, with the suggestion to re-run just those later (`--only`).
 - Where the CSV is saved.
-- An offer of next steps, such as average rating and rating trend by asset, common complaints and praise, or reviews by trip type.
+- An offer of next steps, such as average rating and trend by asset, common complaints and praise, or reviews by trip type.
 
 ## Troubleshooting
 
 - Every asset `blocked`: TripAdvisor is rate-limiting this browser. Wait 15 to 30 minutes, browse a hotel page normally, and retry with fewer assets.
-- The tracker never appears: confirm the tab is on a tripadvisor.com page, then retry step 3.
-- Field values empty in the CSV: TripAdvisor changed its response format. Tell the user, and do not edit the script yourself; the field mapping is maintained in the source repository (`bookmarklet/tripadvisor_bookmarklet.js`, search for `UPDATE HERE`).
+- Nothing happens when the user clicks the bookmark: confirm the tab is on a tripadvisor.com page. If it still does nothing, company browser policy may block bookmarklets.
+- Old behaviour (a green log box instead of the tracker, or pop-ups despite the link): the user has an outdated bookmark. Have them delete it and reinstall from `install_bookmark.html`.

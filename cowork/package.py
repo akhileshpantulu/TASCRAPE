@@ -1,6 +1,6 @@
 """Builds cowork/TripAdvisor-Reviews-Cowork.zip, the folder the user unzips and opens in Cowork.
 
-Run after `node bookmarklet/build.js`:
+Run after `node bookmarklet/build.js` (which rebuilds install.html):
     python cowork/package.py
 """
 import zipfile
@@ -12,7 +12,7 @@ TOP = "TripAdvisor-Reviews-Cowork"
 
 files = {
     f"{TOP}/tripadvisor-reviews/SKILL.md": COWORK / "tripadvisor-reviews" / "SKILL.md",
-    f"{TOP}/tripadvisor-reviews/scripts/ta_scraper.js": COWORK / "tripadvisor-reviews" / "scripts" / "ta_scraper.js",
+    f"{TOP}/tripadvisor-reviews/scripts/make_link.py": COWORK / "tripadvisor-reviews" / "scripts" / "make_link.py",
     f"{TOP}/assets.txt": COWORK / "assets.txt",
     f"{TOP}/COWORK_SETUP_PROMPT.md": COWORK / "COWORK_SETUP_PROMPT.md",
     f"{TOP}/install_bookmark.html": ROOT / "bookmarklet" / "install.html",
