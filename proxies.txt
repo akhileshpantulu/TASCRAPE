@@ -1,0 +1,6 @@
+# Optional. One proxy per line, from a free list you maintain yourself.
+# Leave this file empty (or only comments) to connect directly without a proxy.
+# Supported formats:
+#   http://1.2.3.4:8080
+#   http://user:pass@1.2.3.4:8080
+#   socks5://1.2.3.4:1080
