@@ -1,0 +1,4 @@
+# Your assets, one per line:  Asset Name | TripAdvisor hotel URL
+# Lines starting with # are ignored. The URL must contain -d followed by a number.
+# Example:
+# The Example Hotel | https://www.tripadvisor.com/Hotel_Review-g60763-d93437-Reviews-The_Example_Hotel-New_York_City_New_York.html

@@ -1,12 +1,15 @@
-// Builds bookmarklet/install.html from tripadvisor_bookmarklet.js.
+// Builds, from bookmarklet/tripadvisor_bookmarklet.js:
+//   bookmarklet/install.html                         (drag-to-bookmarks page)
+//   cowork/tripadvisor-reviews/scripts/ta_scraper.js (script Claude in Chrome injects)
 // Usage: node bookmarklet/build.js
 const fs = require("fs");
 const path = require("path");
 
 const dir = __dirname;
+const root = path.join(dir, "..");
 const src = fs.readFileSync(path.join(dir, "tripadvisor_bookmarklet.js"), "utf8");
 
-// Drop the leading header comment and whole-line /* ... */ comments.
+// Drop the leading header comment and whole-line /* ... */ comments, trim lines.
 const body = src
   .replace(/^\/\*[\s\S]*?\*\/\s*/, "")
   .split("\n")
@@ -14,6 +17,16 @@ const body = src
   .map((l) => l.trim())
   .filter(Boolean)
   .join("\n");
+
+// Sanity check: the stripped code must still parse.
+new Function(body);
+
+const skillScript = path.join(root, "cowork", "tripadvisor-reviews", "scripts", "ta_scraper.js");
+fs.mkdirSync(path.dirname(skillScript), { recursive: true });
+fs.writeFileSync(skillScript,
+  "/* TripAdvisor review scraper v2 (generated from bookmarklet/tripadvisor_bookmarklet.js; edit that file, not this one). " +
+  "Set window.__taConfig before running. Progress: window.__taSummary(). */\n" + body +
+  "\n\"TA scraper started\";\n");
 
 const href = "javascript:" + encodeURIComponent(body);
 const escHtml = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -35,27 +48,28 @@ const html = `<!doctype html>
 </head>
 <body>
 <h1>TripAdvisor Review Scraper</h1>
-<p>Runs in your own browser, so no terminal, install or Python is needed. Works in Chrome and Edge.</p>
+<p>Version 2, with a progress tracker for each hotel. Runs in your own browser, so no terminal, install or Python is needed. Works in Chrome and Edge. Claude in Chrome (Cowork) can use this same bookmark.</p>
 
 <h2>1. Add the bookmark</h2>
-<p>Show your bookmarks bar (<code>Ctrl+Shift+B</code>, or <code>Cmd+Shift+B</code> on Mac), then <b>drag this green button onto it</b>:</p>
+<p>Show your bookmarks bar (<code>Ctrl+Shift+B</code>, or <code>Cmd+Shift+B</code> on Mac). If you have an older <b>TA Reviews</b> bookmark, delete it. Then <b>drag this green button onto the bar</b>:</p>
 <p><a class="bm" href="${escHtml(href)}">TA Reviews</a></p>
 <p>If dragging does not work: right-click the bookmarks bar, choose <b>Add page</b>, name it <code>TA Reviews</code>, and paste the text below into the URL field.</p>
 <textarea id="code" readonly>${escHtml(href)}</textarea>
 <p><button onclick="navigator.clipboard.writeText(document.getElementById('code').value);this.textContent='Copied'">Copy</button></p>
 
-<h2>2. Use it</h2>
+<h2>2. Use it by hand</h2>
 <ol>
-  <li>Open <a href="https://www.tripadvisor.com" target="_blank" rel="noopener">tripadvisor.com</a> (any page, or a hotel page).</li>
+  <li>Open one of your hotel pages on <a href="https://www.tripadvisor.com" target="_blank" rel="noopener">tripadvisor.com</a>.</li>
   <li>Click the <b>TA Reviews</b> bookmark.</li>
   <li>Paste your hotel URLs separated by spaces, or leave the box empty to scrape the hotel you are viewing.</li>
-  <li>Answer the two questions (max reviews per hotel, languages).</li>
-  <li>A green box in the corner shows progress. Keep the tab open. When it finishes, <code>tripadvisor_reviews.csv</code> downloads automatically.</li>
+  <li>Enter a max number of reviews per hotel, or leave it empty for all.</li>
+  <li>A tracker panel shows a progress bar for each hotel. Keep the tab open; do not reload it or navigate away. When it finishes, the CSV downloads automatically.</li>
 </ol>
-<p>Start with one hotel and a limit of 20 to check it works.</p>
+<p>If an orange setup message appears, scroll to the hotel's reviews and click the next-page arrow once.</p>
 </body>
 </html>
 `;
 
 fs.writeFileSync(path.join(dir, "install.html"), html);
 console.log(`Wrote install.html (bookmarklet ${href.length} chars)`);
+console.log(`Wrote ${path.relative(root, skillScript)} (${body.length} chars)`);

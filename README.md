@@ -47,3 +47,19 @@ TripAdvisor blocks most cloud servers (including Google Colab) with HTTP 403. Th
 3. Go to tripadvisor.com, click the bookmark, paste hotel URLs separated by spaces, and wait. `tripadvisor_reviews.csv` downloads when it finishes.
 
 If TripAdvisor changes its internal query ID (error `PersistedQueryNotFound`), the bookmarklet asks you to click the reviews "next page" arrow once. It copies the request the page itself sends, saves it in your browser, and reuses it for every hotel. To change the code, edit `bookmarklet/tripadvisor_bookmarklet.js` and rebuild with `node bookmarklet/build.js`.
+
+## Claude Cowork workflow
+
+`cowork/` packages the same scraper as a Cowork skill driven through Claude in Chrome, with a tracker panel in the page that shows a progress bar for each asset.
+
+- `cowork/TripAdvisor-Reviews-Cowork.zip`: unzip, choose the folder as the Cowork working folder, fill in `assets.txt`, then paste `COWORK_SETUP_PROMPT.md` into Cowork.
+- `cowork/tripadvisor-reviews-skill.zip`: the skill on its own, for uploading as a custom skill.
+- `cowork/tripadvisor-reviews/SKILL.md`: the workflow instructions Claude follows.
+
+The script reads `window.__taConfig` (asset list and limits) when Claude injects it, and exposes `window.__taSummary()`, `window.__taStop()` and `window.__taDownload()`. Without a config it behaves as the bookmark and asks for URLs.
+
+After editing `bookmarklet/tripadvisor_bookmarklet.js`, rebuild everything:
+
+```bash
+node bookmarklet/build.js && python cowork/package.py
+```
