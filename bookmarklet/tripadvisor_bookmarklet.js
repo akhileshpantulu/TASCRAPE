@@ -45,7 +45,7 @@
   const LEARN_TIMEOUT = 300000;
   const PAGE_SIZES = [100, 50, 20];
   const COLUMNS = ["asset_name", "hotel_url", "location_id", "id", "title", "text", "rating",
-    "publishedDate", "username", "tripType"];
+    "publishedDate", "stayDate", "username", "tripType"];
 
   if (!/tripadvisor\./.test(location.hostname)) {
     alert("Open a TripAdvisor hotel page first, then run the scraper again.");
@@ -121,6 +121,7 @@
     assets: assets.map((a) => ({ name: a.name, url: a.url, locationId: a.id, status: "queued",
       scraped: 0, target: null, totalOnSite: null, error: null })),
     log: [],
+    warnings: [],
   };
   window.__taState = state;
   window.__taSummary = () => JSON.stringify({
@@ -129,6 +130,7 @@
     pageSize: state.pageSize, totalScraped: state.totalScraped, csvFile: state.csvFile,
     assets: state.assets.map((a) => ({ name: a.name, status: a.status, scraped: a.scraped,
       target: a.target, error: a.error })),
+    warnings: state.warnings,
     recentLog: state.log.slice(-5),
   });
   let stopRequested = false;
@@ -178,7 +180,14 @@
   const logBox = el("details", "margin-top:12px;color:" + C.muted + ";font-size:12px");
   const logSummary = el("summary", "cursor:pointer", "Log");
   const logLines = el("div", "font:11px/1.4 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;max-height:140px;overflow:auto;margin-top:6px");
-  logBox.append(logSummary, logLines);
+  const sampleBtn = el("button", "margin-top:6px;border:1px solid " + C.line + ";background:#fff;border-radius:6px;padding:3px 8px;font-size:12px;font-family:inherit;cursor:pointer;color:" + C.ink, "Copy sample review (for troubleshooting)");
+  sampleBtn.onclick = () => {
+    const txt = window.__taSample ? window.__taSample() : "null";
+    const done = () => { sampleBtn.textContent = "Copied"; };
+    if (navigator.clipboard) navigator.clipboard.writeText(txt).then(done, () => prompt("Copy this:", txt));
+    else prompt("Copy this:", txt);
+  };
+  logBox.append(logSummary, logLines, sampleBtn);
   body.append(overallLabel, overall.track, stats, banner, list, logBox);
   panel.append(header, body);
   document.body.appendChild(panel);
@@ -234,8 +243,11 @@
     if (state.status === "running" && frac > 0.02 && frac < 1) line += " · ~" + Math.max(1, Math.round(mins / frac - mins)) + " min left";
     if (state.pageSize) line += " · " + state.pageSize + " per request";
     stats.textContent = line;
-    banner.style.display = state.status === "needs_setup" || state.status === "aborted" ? "block" : "none";
-    banner.textContent = state.message;
+    const bannerText = state.status === "needs_setup" || state.status === "aborted" ? state.message :
+      state.warnings.join("\n");
+    banner.style.display = bannerText ? "block" : "none";
+    banner.style.whiteSpace = "pre-line";
+    banner.textContent = bannerText;
     const active = state.status === "running" || state.status === "needs_setup";
     stopBtn.style.display = active ? "" : "none";
     dlBtn.disabled = active || !state.totalScraped;
@@ -450,17 +462,91 @@
     for (const p of paths) { const v = dig(d, p); if (v != null && v !== "") return v; }
     return null;
   };
+  /* ---------- dates ---------- */
+  /* Review dates have appeared under several field names and formats. Known
+     paths are tried first; otherwise the review object is searched, level by
+     level, for a date-like value under a date-like key. Subtrees for the
+     reviewer profile and the management response are skipped, since they
+     carry their own dates. */
+  const MONTHS = "jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec";
+  const RE_ISO = /^\d{4}-\d{2}(-\d{2})?([T ][\d:.]+(Z|[+-]\d{2}:?\d{2})?)?$/;
+  const RE_MDY = new RegExp("(" + MONTHS + ")[a-z]*\\.?\\s+(?:(\\d{1,2}),?\\s+)?(\\d{4})", "i");
+  const RE_DMY = new RegExp("(\\d{1,2})\\s+(" + MONTHS + ")[a-z]*\\.?,?\\s+(\\d{4})", "i");
+  const PUB_KEY = /publish|created|submit|written|posted|reviewdate|datereviewed|^date$|datetime/i;
+  const STAY_KEY = /stay|travel|visit|trip.*date/i;
+  const SKIP_KEY = /user|profile|owner|author|member|response|reply|mgmt|management|photo|image/i;
+  const pad2 = (n) => String(n).padStart(2, "0");
+  const toDate = (v) => {
+    if (typeof v === "number") {
+      const ms = v > 1e12 ? v : v > 9e8 ? v * 1000 : NaN;
+      if (!(ms > 9.4e11 && ms < 4.1e12)) return null;
+      return new Date(ms).toISOString().slice(0, 10);
+    }
+    if (typeof v !== "string") return null;
+    const t = v.trim();
+    if (RE_ISO.test(t)) return t.length > 10 && /[Tt ]/.test(t[10]) ? t.slice(0, 10) : t;
+    const monthNum = (name) => pad2(MONTHS.split("|").indexOf(name.slice(0, 3).toLowerCase()) + 1);
+    let m = t.match(RE_DMY);
+    if (m) return m[3] + "-" + monthNum(m[2]) + "-" + pad2(m[1]);
+    m = t.match(RE_MDY);
+    if (m) return m[3] + "-" + monthNum(m[1]) + (m[2] ? "-" + pad2(m[2]) : "");
+    return null;
+  };
+  const dateInside = (v, depth) => {
+    const d = toDate(v);
+    if (d) return d;
+    if (depth > 0 && v && typeof v === "object") {
+      for (const x of Object.values(v)) { const r = dateInside(x, depth - 1); if (r) return r; }
+    }
+    return null;
+  };
+  const findDate = (raw, keyRe, notKeyRe) => {
+    let level = [raw];
+    for (let depth = 0; depth < 4 && level.length; depth++) {
+      const next = [];
+      for (const o of level) {
+        for (const [k, v] of Object.entries(o)) {
+          if (keyRe.test(k) && !(notKeyRe && notKeyRe.test(k))) {
+            const d = dateInside(v, 2);
+            if (d) return d;
+          }
+          if (v && typeof v === "object" && !SKIP_KEY.test(k)) next.push(v);
+        }
+      }
+      level = next;
+    }
+    return null;
+  };
+
   /* UPDATE HERE: field mapping */
   const parse = (raw) => ({
     id: first(raw, ["id"], ["reviewId"]),
     title: first(raw, ["title"]),
     text: first(raw, ["text"], ["reviewText"]),
     rating: first(raw, ["rating"], ["bubbleRating"]),
-    publishedDate: first(raw, ["publishedDate"], ["createdDate"], ["publishedDateTime"]),
+    publishedDate: toDate(first(raw, ["publishedDate"], ["createdDate"], ["publishedDateTime"],
+      ["publishDate"], ["submissionDateTime"])) || findDate(raw, PUB_KEY, STAY_KEY),
+    stayDate: toDate(first(raw, ["tripInfo", "stayDate"], ["stayDate"])) || findDate(raw, STAY_KEY, null),
     username: first(raw, ["userProfile", "username"], ["userProfile", "displayName"],
       ["user", "username"], ["username"]),
     tripType: first(raw, ["tripInfo", "tripType"], ["tripType"]),
   });
+
+  /* A trimmed copy of the first raw review, for troubleshooting field names. */
+  let sampleReview = null;
+  let sampleMissingDate = false;
+  const trimSample = (v, depth) => {
+    if (typeof v === "string") return v.length > 80 ? v.slice(0, 80) + "\u2026" : v;
+    if (Array.isArray(v)) return depth > 0 ? v.slice(0, 3).map((x) => trimSample(x, depth - 1)) : "[array]";
+    if (v && typeof v === "object") {
+      if (depth <= 0) return "{object}";
+      const o = {};
+      for (const [k, x] of Object.entries(v)) o[k] = trimSample(x, depth - 1);
+      return o;
+    }
+    return v;
+  };
+  window.__taSample = () => JSON.stringify(sampleReview, null, 2);
 
   let goodLimit = template.pageSize || null;
   const fetchPage = async (asset, offset, limit, quiet) => {
@@ -513,6 +599,13 @@
       for (const raw of page.reviews) {
         if (!raw || typeof raw !== "object") continue;
         const row = parse(raw);
+        if (!sampleReview || (!row.publishedDate && !sampleMissingDate)) {
+          sampleReview = trimSample(raw, 4);
+          if (!row.publishedDate) {
+            sampleMissingDate = true;
+            say("no publish date in review; field names: " + Object.keys(raw).join(", "));
+          }
+        }
         const key = row.id != null ? String(row.id) : row.title + "|" + row.text;
         if (ids.has(key)) continue;
         ids.add(key);
@@ -531,6 +624,9 @@
       page = await fetchPage(asset, offset, limit);
     }
     } catch (e) { e.partial = out; throw e; }
+    if (out.length && out.every((r) => !r.publishedDate)) {
+      state.warnings.push(asset.name + ": no review dates found. Click 'Copy sample review' under Log and send it to whoever maintains this script.");
+    }
     if (st.target == null || st.target > out.length) st.target = out.length;
     return out;
   };

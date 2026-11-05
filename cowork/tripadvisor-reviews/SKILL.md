@@ -71,13 +71,15 @@ Act on `status`:
 - `aborted`: read `message`, tell the user, and offer to retry. Usually it means setup timed out; reload the first hotel page and start again from step 3.
 - `done` or `stopped`: go to step 5.
 
+If `warnings` in the summary is not empty (for example an asset with no review dates found), tell the user. Run `window.__taSample()` and include its output in your message: it is a trimmed copy of a raw review, showing the field names TripAdvisor used, which the script maintainer needs to fix the field mapping.
+
 Per-asset statuses: `queued`, `running`, `done` (`scraped` 0 means the hotel has no reviews in the selected language), `blocked` (TripAdvisor returned 403/429 for that asset), `failed` (see `error`), `skipped` (run was stopped first).
 
 To stop early, run `window.__taStop()`; the reviews collected so far are kept and downloaded.
 
 ## 5. Save the results
 
-The CSV is downloaded by Chrome to the user's Downloads folder, with the name in `csvFile` (for example `tripadvisor_reviews_20261105_1430.csv`). Columns: `asset_name, hotel_url, location_id, id, title, text, rating, publishedDate, username, tripType`.
+The CSV is downloaded by Chrome to the user's Downloads folder, with the name in `csvFile` (for example `tripadvisor_reviews_20261105_1430.csv`). Columns: `asset_name, hotel_url, location_id, id, title, text, rating, publishedDate, stayDate, username, tripType`. Dates are `YYYY-MM-DD`; `stayDate` is often only `YYYY-MM` because TripAdvisor shows the month of stay.
 
 - If you have access to the Downloads folder, copy that file into `outputs/` in the working folder.
 - Otherwise tell the user the file name and ask them to move it into the working folder's `outputs/` folder, or to give you access to Downloads.

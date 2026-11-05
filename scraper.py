@@ -99,6 +99,7 @@ OUTPUT_COLUMNS = [
     "text",
     "rating",
     "publishedDate",
+    "stayDate",
     "username",
     "tripType",
 ]
@@ -379,7 +380,9 @@ def parse_review(raw: dict) -> dict:
         "title": first_present(raw, ("title",)),
         "text": first_present(raw, ("text",), ("reviewText",)),
         "rating": first_present(raw, ("rating",), ("bubbleRating",)),
-        "publishedDate": first_present(raw, ("publishedDate",), ("createdDate",), ("publishedDateTime",)),
+        "publishedDate": first_present(raw, ("publishedDate",), ("createdDate",), ("publishedDateTime",),
+                                       ("publishDate",), ("submissionDateTime",)),
+        "stayDate": first_present(raw, ("tripInfo", "stayDate"), ("stayDate",)),
         "username": first_present(
             raw,
             ("userProfile", "username"),
