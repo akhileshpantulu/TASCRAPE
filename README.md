@@ -46,4 +46,4 @@ TripAdvisor blocks most cloud servers (including Google Colab) with HTTP 403. Th
 2. Drag the green **TA Reviews** button onto your bookmarks bar.
 3. Go to tripadvisor.com, click the bookmark, paste hotel URLs separated by spaces, and wait. `tripadvisor_reviews.csv` downloads when it finishes.
 
-If the API changes, edit the `UPDATE HERE` values in `bookmarklet/tripadvisor_bookmarklet.js` and rebuild with `node bookmarklet/build.js`.
+If TripAdvisor changes its internal query ID (error `PersistedQueryNotFound`), the bookmarklet asks you to click the reviews "next page" arrow once. It copies the request the page itself sends, saves it in your browser, and reuses it for every hotel. To change the code, edit `bookmarklet/tripadvisor_bookmarklet.js` and rebuild with `node bookmarklet/build.js`.
