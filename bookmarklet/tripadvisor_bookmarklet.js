@@ -23,7 +23,7 @@
   const FALLBACK_QUERY_ID = "ef1a9f94012220d3";
   const STORE_KEY = "taReviewsTemplate.v1";
   const HOTEL_DELAY = [3000, 7000];
-  const PAGE_DELAY = [1500, 3500];
+  const PAGE_DELAY = [1000, 2500];
   const BLOCK_COOLDOWN = 30000;
   const LEARN_TIMEOUT = 180000;
   const COLUMNS = ["hotel_url", "location_id", "id", "title", "text", "rating",
@@ -164,10 +164,11 @@
   if (!template) template = fallbackTemplate;
 
   const pageSizeOf = (t) => findNumberKey(t.item.variables, "limit") || 10;
-  const buildBody = (t, hotelId, offset) => {
+  const buildBody = (t, hotelId, offset, limit) => {
     const item = clone(t.item);
     item.variables = replaceValue(item.variables, t.locId, hotelId);
     setKey(item.variables, "offset", offset);
+    if (limit) setKey(item.variables, "limit", limit);
     return [item];
   };
 
@@ -249,14 +250,14 @@
   class Blocked extends Error {}
   class NeedsLearning extends Error {}
 
-  const extract = (body) => {
+  const extract = (body, quiet) => {
     const results = Array.isArray(body) ? body : [body];
     let notFound = false;
     for (const r of results) {
       if (r && r.errors) {
         const msg = JSON.stringify(r.errors);
         if (/PersistedQuery/i.test(msg)) notFound = true;
-        else say("  GraphQL errors: " + msg.slice(0, 300));
+        else if (!quiet) say("  GraphQL errors: " + msg.slice(0, 300));
       }
     }
     let reviews = [];
@@ -283,27 +284,54 @@
     tripType: first(raw, ["tripInfo", "tripType"], ["tripType"]),
   });
 
+  /* Page sizes to try, largest first. TripAdvisor's own page asks for 10.
+     The first size that returns reviews is remembered for the whole run and
+     saved with the template. Sizes the server rejects are skipped. */
+  const PAGE_SIZES = [100, 50, 20];
+  let goodLimit = template.pageSize || null;
+
+  const fetchPage = async (hotel, offset, limit, quiet) => {
+    const resp = await realFetch(GRAPHQL_PATH, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json", "X-Requested-By": token() },
+      body: JSON.stringify(buildBody(template, hotel.id, offset, limit)),
+    });
+    if (resp.status === 403 || resp.status === 429) throw new Blocked("HTTP " + resp.status);
+    let body = null;
+    try { body = await resp.json(); } catch (e) {}
+    if (!resp.ok && !body) return { reviews: [], total: null, notFound: false, httpError: resp.status };
+    return extract(body, quiet);
+  };
+
+  const firstPage = async (hotel) => {
+    const base = pageSizeOf(template);
+    const sizes = goodLimit ? [goodLimit] : [...PAGE_SIZES.filter((n) => n > base), base];
+    for (const limit of sizes) {
+      const page = await fetchPage(hotel, 0, limit, limit !== base);
+      if (page.notFound) throw new NeedsLearning("query ID not recognized");
+      if (page.reviews.length) {
+        if (goodLimit !== limit) {
+          goodLimit = limit;
+          if (template !== fallbackTemplate) { template.pageSize = limit; saveTemplate(template); }
+          if (limit !== base) say(`  requesting ${limit} reviews per call (TripAdvisor may return fewer)`);
+        }
+        return { page, limit };
+      }
+      if (limit !== base) await sleep(rand(PAGE_DELAY));
+    }
+    if (!learnedThisRun) throw new NeedsLearning("no reviews returned");
+    return { page: { reviews: [], total: null }, limit: goodLimit || base };
+  };
+
   const scrapeHotel = async (hotel) => {
     const rows = [];
     const ids = new Set();
-    const pageSize = pageSizeOf(template);
     let offset = 0;
     let total = null;
+    let { page, limit } = await firstPage(hotel);
     while (true) {
-      const resp = await realFetch(GRAPHQL_PATH, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json", "X-Requested-By": token() },
-        body: JSON.stringify(buildBody(template, hotel.id, offset)),
-      });
-      if (resp.status === 403 || resp.status === 429) throw new Blocked("HTTP " + resp.status);
-      let body = null;
-      try { body = await resp.json(); } catch (e) {}
-      if (!resp.ok && !body) throw new Error("GraphQL returned HTTP " + resp.status);
-      const { reviews, total: t, notFound } = extract(body);
-      if (offset === 0 && (notFound || (!reviews.length && !learnedThisRun))) {
-        throw new NeedsLearning(notFound ? "query ID not recognized" : "no reviews returned");
-      }
+      const { reviews, total: t } = page;
       if (t != null) total = t;
       if (!reviews.length) {
         if (offset === 0) say("  No reviews returned for this hotel.");
@@ -324,8 +352,8 @@
       if (rows.length >= maxReviews) { rows.length = maxReviews; break; }
       offset += reviews.length;
       if (total != null && offset >= total) break;
-      if (reviews.length < pageSize && total == null) break;
       await sleep(rand(PAGE_DELAY));
+      page = await fetchPage(hotel, offset, limit);
     }
     return rows;
   };
