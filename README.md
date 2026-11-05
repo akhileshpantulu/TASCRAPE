@@ -37,3 +37,13 @@ The output CSV has these columns: `hotel_url, location_id, id, title, text, rati
 ## When it breaks
 
 TripAdvisor's GraphQL API is undocumented and uses persisted query hashes that change on redeploys. If you get zero reviews, check `debug/` for the saved raw response, then follow the steps in the docstring at the top of `scraper.py` to copy the current `preRegisteredQueryId` and `variables` from Chrome DevTools. Every spot that may need editing is marked `UPDATE HERE`.
+
+## No terminal? Use the browser bookmark version
+
+TripAdvisor blocks most cloud servers (including Google Colab) with HTTP 403. The bookmarklet in `bookmarklet/` runs the same GraphQL requests from inside your own browser tab, using your own IP address and cookies.
+
+1. Open `bookmarklet/install.html` in Chrome or Edge (double-click the file).
+2. Drag the green **TA Reviews** button onto your bookmarks bar.
+3. Go to tripadvisor.com, click the bookmark, paste hotel URLs separated by spaces, and wait. `tripadvisor_reviews.csv` downloads when it finishes.
+
+If the API changes, edit the `UPDATE HERE` values in `bookmarklet/tripadvisor_bookmarklet.js` and rebuild with `node bookmarklet/build.js`.
